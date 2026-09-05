@@ -1,0 +1,11 @@
+{
+  "name": "Output Manager",
+  "author": "joeatethebeans",
+  "flags": ["root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["utility", "display", "audio", "outputs"],
+    "description": "Switch Steam Gaming Mode's display and audio outputs from the Quick Access Menu.",
+    "image": "https://pathtoimage.com/path/to/image.png"
+  }
+}
