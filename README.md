@@ -3,6 +3,9 @@
 Switch Steam Gaming Mode's display and audio outputs from the Quick Access
 Menu.
 
+## Compatibility
+This plugin **only** works on Bazzite, ChimeraOS and other SteamOS derivatives that expose the *OUTPUT_CONNECTOR* variable in the gamescope session. This plugin **does NOT** work on vanilla SteamOS, and as such cannot be submitted to the Decky Plugin Store.
+
 ## Features
 
 - **Displays section**: tap a connected display to switch to it. This
