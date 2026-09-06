@@ -1,9 +1,10 @@
 # Output Manager (Decky plugin)
 
-Switch Steam Gaming Mode's display and audio outputs from the Quick Access
-Menu.
+Switch Steam Gaming Mode's display and audio outputs from the Quick Access Menu.
+Switching displays restarts Gaming Mode, it is not a live switch.
 
 ## Compatibility
+
 This plugin **only** works on Bazzite, ChimeraOS and other SteamOS derivatives that expose the *OUTPUT_CONNECTOR* variable in the gamescope session. This plugin **does NOT** work on vanilla SteamOS, and as such cannot be submitted to the Decky Plugin Store.
 
 ## Features
@@ -23,6 +24,14 @@ This plugin **only** works on Bazzite, ChimeraOS and other SteamOS derivatives t
 - **Default display**: configurable in Settings, automatically applied
   when Gaming Mode boots and when the system wakes from sleep.
 - **Advanced settings**: override certain variables under the hood. Good for debugging
+
+## Installation
+
+As this plugin is not available on the Decky Plugin Store, it must be installed as a zip file through the Decky Developer tab.
+
+1. Go to Decky in the quick access menu and go to Settings → General and toggle Developer Mode on.
+2. Go to Settings → Developer → Install Plugin From ZIP File
+3. Find the plugin zip downloaded from the release page and select it.
 
 <br>
 <a href="https://www.buymeacoffee.com/joeatethebeans">
