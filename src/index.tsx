@@ -38,11 +38,13 @@ interface ActionResult {
 }
 
 interface Config {
+    "steamDeckInternalConnector": string;
     targetUid: number;
-    gamescopeUnitGlob: string;
     usernameOverride: string | null;
-    skipRestartWarning: boolean;
     defaultDisplay: string | null;
+    "useLegacySwitchMethod": boolean;
+    legacyGamescopeUnitGlob: string;
+    skipLegacyRestartWarning: boolean;
 }
 
 const getState = callable<[], OutputState>("get_state");
@@ -209,7 +211,7 @@ const Content: FC = () => {
     };
 
     const onSwitchDisplay = (id: string) => {
-        if (config.skipRestartWarning) {
+        if (config.skipLegacyRestartWarning) {
             doSwitchDisplay(id);
             return;
         }
@@ -217,7 +219,7 @@ const Content: FC = () => {
             <RestartWarningModal
                 onConfirm={async (neverShowAgain) => {
                     if (neverShowAgain) {
-                        await setConfig({ skipRestartWarning: true });
+                        await setConfig({ skipLegacyRestartWarning: true });
                         await refreshConfig();
                     }
                     doSwitchDisplay(id);
@@ -514,74 +516,110 @@ const SettingsPage: FC<{
     onPickDefaultDisplay: () => void;
 }> = ({ config, displays, onBack, onUpdate, onPickDefaultDisplay }) => {
     const [uid, setUid] = useState(String(config.targetUid));
-    const [glob, setGlob] = useState(config.gamescopeUnitGlob);
     const [username, setUsername] = useState(config.usernameOverride ?? "");
+    const [internalDisplayConnector, setInternalDisplayConnector] = useState(
+        config.steamDeckInternalConnector ?? "",
+    );
+    const [useLegacySwitcher, setUseLegacySwitcher] = useState(config.useLegacySwitchMethod);
+    const [legacyGamescopeUnitGlob, setLegacyGamescopeUnitGlob] = useState(
+        config.legacyGamescopeUnitGlob,
+    );
 
-    const defaultDisplayLabel = config.defaultDisplay
-        ? (displays.find((d) => d.id === config.defaultDisplay)?.label ?? config.defaultDisplay)
+    const defaultDisplayLabel = config.steamDeckInternalConnector
+        ? (displays.find((d) => d.id === config.defaultDisplay)?.label ??
+          config.defaultDisplay)
         : "None";
 
     return (
-        <PanelSection title="Settings">
-            <PanelSectionRow>
-                <ButtonItem layout="below" onClick={onBack}>
-                    ← Back
-                </ButtonItem>
-            </PanelSectionRow>
+        <>
+            <PanelSection title="Settings">
+                <PanelSectionRow>
+                    <ButtonItem layout="below" onClick={onBack}>
+                        ← Back
+                    </ButtonItem>
+                </PanelSectionRow>
 
-            <PanelSectionRow>
-                <ButtonItem layout="below" onClick={onPickDefaultDisplay}>
-                    Default display: {defaultDisplayLabel}
-                </ButtonItem>
-            </PanelSectionRow>
+                <PanelSectionRow>
+                    <ButtonItem layout="below" onClick={onPickDefaultDisplay}>
+                        Default display: {defaultDisplayLabel}
+                    </ButtonItem>
+                </PanelSectionRow>
+            </PanelSection>
 
-            <PanelSectionRow></PanelSectionRow>
+            <PanelSection title="Advanced Settings">
+                <PanelSectionRow>
+                    Only change these settings if you know what you're doing. Incorrect values WILL break the plugin.
+                </PanelSectionRow>
 
-            <PanelSectionRow>
-                Only change the below settings if you know what you're doing. Incorrect values will
-                break the plugin.
-            </PanelSectionRow>
+                <PanelSectionRow>
+                    <TextField
+                        label="Target UID"
+                        description="The uid of your desktop user (typically 1000)"
+                        value={uid}
+                        onChange={(e) => {
+                            setUid(e.target.value);
+                            const parsed = parseInt(e.target.value, 10);
+                            if (!Number.isNaN(parsed)) {
+                                onUpdate({ targetUid: parsed });
+                            }
+                        }}
+                    />
+                </PanelSectionRow>
 
-            <PanelSectionRow>
-                <TextField
-                    label="Target UID"
-                    description="The uid of your desktop user (typically 1000)"
-                    value={uid}
-                    onChange={(e) => {
-                        setUid(e.target.value);
-                        const parsed = parseInt(e.target.value, 10);
-                        if (!Number.isNaN(parsed)) {
-                            onUpdate({ targetUid: parsed });
-                        }
-                    }}
-                />
-            </PanelSectionRow>
+                <PanelSectionRow>
+                    <TextField
+                        label="Username override"
+                        description="Leave blank to auto-detect from Target UID or fallback to 'deck'"
+                        value={username}
+                        onChange={(e) => {
+                            setUsername(e.target.value);
+                            onUpdate({ usernameOverride: e.target.value });
+                        }}
+                    />
+                </PanelSectionRow>
 
-            <PanelSectionRow>
-                <TextField
-                    label="Gamescope unit glob"
-                    description="systemd --user unit pattern used to find the gaming mode session"
-                    value={glob}
-                    onChange={(e) => {
-                        setGlob(e.target.value);
-                        onUpdate({ gamescopeUnitGlob: e.target.value });
-                    }}
-                />
-            </PanelSectionRow>
+                <PanelSectionRow>
+                    <TextField
+                        label="Steam Deck Internal Display Connector"
+                        description="The Steam Decks internal display relies on special behaivours to switch."
+                        value={internalDisplayConnector}
+                        onChange={(e) => {
+                            setInternalDisplayConnector(e.target.value);
+                            onUpdate({ internalDisplayConnector: e.target.value });
+                        }}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
 
-            <PanelSectionRow>
-                <TextField
-                    label="Username override"
-                    description="Leave blank to auto-detect from Target UID or fallback to 'deck'"
-                    value={username}
-                    onChange={(e) => {
-                        setUsername(e.target.value);
-                        onUpdate({ usernameOverride: e.target.value });
-                    }}
-                />
-            </PanelSectionRow>
+            <PanelSection title="Non-AMD GPU Switcher">
+                <PanelSectionRow>
+                    Only use the legacy switcher if you're on a device that does not have an AMD GPU.
+                </PanelSectionRow>
 
-        </PanelSection>
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Use Legacy Non-AMD Switcher"
+                        checked={useLegacySwitcher}
+                        onChange={(checked) => {
+                            setUseLegacySwitcher(checked);
+                            onUpdate({ useLegacySwitcher: checked });
+                        }}
+                    />
+                </PanelSectionRow>
+
+                <PanelSectionRow>
+                    <TextField
+                        label="Gamescope unit glob"
+                        description="systemd --user unit pattern used to find the gamescope session"
+                        value={legacyGamescopeUnitGlob}
+                        onChange={(e) => {
+                            setLegacyGamescopeUnitGlob(e.target.value);
+                            onUpdate({ legacyGamescopeUnitGlob: e.target.value });
+                        }}
+                    />
+                </PanelSectionRow>
+            </PanelSection>
+        </>
     );
 };
 
