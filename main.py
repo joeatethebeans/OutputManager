@@ -10,11 +10,13 @@ import decky_plugin
 SETTINGS_FILE = os.path.join(decky_plugin.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 
 DEFAULT_CONFIG = {
+    "steamDeckInternalConnector": "eDP-1",
     "targetUid": 1000,
-    "gamescopeUnitGlob": "gamescope-session-plus@*.service",
     "usernameOverride": None,
-    "skipRestartWarning": False,
     "defaultDisplay": None,
+    "useLegacySwitchMethod": False,
+    "legacyGamescopeUnitGlob": "gamescope-session-plus@*.service",
+    "skipLegacyRestartWarning": False,
 }
 
 RESUME_POLL_INTERVAL_SECONDS = 10
@@ -199,26 +201,33 @@ class Plugin:
         settings = _load_settings()
         config = settings.setdefault("config", {})
 
+        if "steamDeckInternalConnector" in patch:
+            value = (patch["steamDeckInternalConnector"] or "").strip()
+            config["steamDeckInternalConnector"] = value or DEFAULT_CONFIG["steamDeckInternalConnector"]
+
         if "targetUid" in patch:
             try:
                 config["targetUid"] = int(patch["targetUid"])
             except (TypeError, ValueError):
                 return {"ok": False, "error": "Target UID must be a number"}
 
-        if "gamescopeUnitGlob" in patch:
-            value = (patch["gamescopeUnitGlob"] or "").strip()
-            config["gamescopeUnitGlob"] = value or DEFAULT_CONFIG["gamescopeUnitGlob"]
-
         if "usernameOverride" in patch:
             value = (patch["usernameOverride"] or "").strip()
             config["usernameOverride"] = value or None
 
-        if "skipRestartWarning" in patch:
-            config["skipRestartWarning"] = bool(patch["skipRestartWarning"])
-
         if "defaultDisplay" in patch:
             value = (patch["defaultDisplay"] or "").strip()
             config["defaultDisplay"] = value or None
+
+        if "useLegacySwitchMethod" in patch:
+            config["useLegacySwitchMethod"] = bool(patch["useLegacySwitchMethod"])
+
+        if "legacyGamescopeUnitGlob" in patch:
+            value = (patch["legacyGamescopeUnitGlob"] or "").strip()
+            config["legacyGamescopeUnitGlob"] = value or DEFAULT_CONFIG["legacyGamescopeUnitGlob"]
+
+        if "skipLegacyRestartWarning" in patch:
+            config["skipLegacyRestartWarning"] = bool(patch["skipLegacyRestartWarning"])
 
         _save_settings(settings)
         return {"ok": True}
