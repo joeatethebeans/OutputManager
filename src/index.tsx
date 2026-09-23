@@ -211,7 +211,7 @@ const Content: FC = () => {
     };
 
     const onSwitchDisplay = (id: string) => {
-        if (config.skipLegacyRestartWarning) {
+        if (!config.useLegacySwitchMethod || config.skipLegacyRestartWarning) {
             doSwitchDisplay(id);
             return;
         }
