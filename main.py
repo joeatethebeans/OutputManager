@@ -239,6 +239,14 @@ async def _do_switch_display_to(connector):
             await _set_connector_force(off_connector, "off")
     await _set_connector_force(connector, "on")
     await _trigger_hotplug(connector)
+
+    settings = _load_settings()
+    default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
+    if default_audio:
+        audio_result = await _set_default_sink_with_retry(default_audio)
+        if not audio_result["ok"]:
+            decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
+
     return {"ok": True}
 
 
