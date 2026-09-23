@@ -525,7 +525,7 @@ const SettingsPage: FC<{
         config.legacyGamescopeUnitGlob,
     );
 
-    const defaultDisplayLabel = config.steamDeckInternalConnector
+    const defaultDisplayLabel = config.defaultDisplay
         ? (displays.find((d) => d.id === config.defaultDisplay)?.label ??
           config.defaultDisplay)
         : "None";
@@ -585,7 +585,7 @@ const SettingsPage: FC<{
                         value={internalDisplayConnector}
                         onChange={(e) => {
                             setInternalDisplayConnector(e.target.value);
-                            onUpdate({ internalDisplayConnector: e.target.value });
+                            onUpdate({ steamDeckInternalConnector: e.target.value });
                         }}
                     />
                 </PanelSectionRow>
@@ -602,7 +602,7 @@ const SettingsPage: FC<{
                         checked={useLegacySwitcher}
                         onChange={(checked) => {
                             setUseLegacySwitcher(checked);
-                            onUpdate({ useLegacySwitcher: checked });
+                            onUpdate({ useLegacySwitchMethod: checked });
                         }}
                     />
                 </PanelSectionRow>
