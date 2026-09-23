@@ -403,7 +403,7 @@ class Plugin:
         display_settings = settings.get("displays", {})
         audio_settings = settings.get("audio", {})
 
-        connected_displays = set(_list_connected_connectors())
+        connected_displays = set(await _list_connected_connectors())
         all_display_ids = sorted(connected_displays | set(display_settings.keys()))
         displays = []
         for display_id in all_display_ids:
