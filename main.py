@@ -47,7 +47,6 @@ def _get_config():
     settings = _load_settings()
     config = dict(DEFAULT_CONFIG)
     config.update(settings.get("config") or {})
-    default_display = config.get("defaultDisplay")
     return config
 
 
