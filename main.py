@@ -347,15 +347,16 @@ def _is_desktop_session_active():
 class Plugin:
     async def _main(self):
         decky_plugin.logger.info("Output Manager loaded")
-        self._suspend_task = asyncio.create_task(self._suspend_task())
-        self._desktop_mode_task = asyncio.create_task(self._desktop_mode_task())
-        self._boot()
+        self._suspend_task_handle = asyncio.create_task(self._suspend_task())
+        self._desktop_mode_task_handle = asyncio.create_task(self._desktop_mode_task())
+        asyncio.create_task(self._boot())
 
     async def _unload(self):
         decky_plugin.logger.info("Output Manager unloaded")
-        task = getattr(self, "_background_task", None)
-        if task:
-            task.cancel()
+        for handle in ("_suspend_task_handle", "_desktop_mode_task_handle"):
+            task = getattr(self, handle, None)
+            if task:
+                task.cancel()
 
     async def get_config(self):
         return _get_config()
