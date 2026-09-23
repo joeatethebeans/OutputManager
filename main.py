@@ -193,7 +193,8 @@ async def _do_list_connected_connectors():
         await _trigger_hotplug(connector)
         if await _get_connector_connected(connector):
             connected.append(connector)
-    await _switch_display_to(return_connector)
+    if return_connector is not None:
+        await _switch_display_to(return_connector)
     return connected
 
 
