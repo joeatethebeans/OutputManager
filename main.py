@@ -48,6 +48,7 @@ def _get_config():
     settings = _load_settings()
     config = dict(DEFAULT_CONFIG)
     config.update(settings.get("config") or {})
+    default_display = config.get("defaultDisplay")
     return config
 
 
@@ -106,7 +107,100 @@ def _current_gamescope_unit():
     return None
 
 
-def _list_connected_displays():
+async def _list_connectors():
+    connectors = []
+    drm_dir = "/sys/class/drm"
+    try:
+        entries = os.listdir(drm_dir)
+        for entry in entries:
+            if os.path.exists(os.path.join(drm_dir, entry, "connector_id")) and "Writeback" not in entry:
+                card_part, connector_name = entry.split("-", 1)
+                card_number = int(card_part[4:])
+                connectors.append(connector_name)
+    except Exception as e:
+        decky_plugin.logger.error(f"_list_connectors: couldn't get connectors from {drm_dir}: {e}")
+    return connectors
+
+
+async def _set_connector_force(connector: tuple, force: str):
+    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "force")
+    try:
+        with open(path, "w") as force_file:
+            force_file.write(force)
+    except Exception as e:
+        decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector[1]} of card {connector[0]} to {force}: {e}")
+
+
+async def _get_connector_connected(connector: tuple):
+    path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "status")
+    try:
+        with open(path, "r") as status_file:
+            return status_file.read().strip() == "connected"
+    except Exception as e:
+        decky_plugin.logger.error(f"_get_connector_connected: couldn't get \"connected\" status of connector {connector[1]} of card {connector[0]}: {e}")
+        return False
+
+
+async def _get_connector_enabled(connector: tuple):
+    path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "enabled")
+    try:
+        with open(path, "r") as enabled_file:
+            return enabled_file.read().strip() == "enabled"
+    except Exception as e:
+        decky_plugin.logger.error(f"_get_connector_enabled: couldn't get \"enabled\" status of connector {connector[1]} of card {connector[0]}: {e}")
+        return False
+
+
+async def _unspecify_all_connectors():
+    connectors = await _list_connectors()
+    for connector in connectors:
+        await _set_connector_force(connector, "unspecified")
+
+
+async def _get_current_connector():
+    config = _get_config()
+    if config.get("useLegacySwitchMethod"):
+        return await _do_get_current_connector_legacy()
+    return await _do_get_current_connector()
+
+
+async def _do_get_current_connector():
+    connectors = await _list_connectors()
+    for connector in connectors:
+        if await _get_connector_enabled(connector):
+            return connector
+    return None
+
+
+async def _do_get_current_connector_legacy():
+    result = _run_as_user(["systemctl", "--user", "show-environment"])
+    for line in result.stdout.splitlines():
+        if line.startswith("OUTPUT_CONNECTOR="):
+            return None, line.split("=", 1)[1]
+    return None
+
+
+async def _list_connected_connectors():
+    config = _get_config()
+    if config.get("useLegacySwitchMethod"):
+        return await _do_list_connected_connectors_legacy()
+    return await _do_list_connected_connectors()
+
+
+async def _do_list_connected_connectors():
+    connectors = await _list_connectors()
+    return_connector = await _get_current_connector()
+    await _unspecify_all_connectors()
+    connected = []
+    for connector in connectors:
+        await _trigger_hotplug(connector)
+        if await _get_connector_connected(connector):
+            connected.append(connector)
+    await _switch_display_to(return_connector)
+    return connected
+
+
+async def _do_list_connected_connectors_legacy():
     outputs = []
     drm_dir = "/sys/class/drm"
     try:
@@ -127,11 +221,73 @@ def _list_connected_displays():
             continue
         if state != "connected":
             continue
-        connector = re.sub(r"^card\d+-", "", name)
+        card_part, connector_name = name.split("-", 1)
+        card_number = int(card_part[4:])
+        connector = connector_name
         if connector not in outputs:
             outputs.append(connector)
 
     return sorted(outputs)
+
+async def _switch_display_to(connector):
+    config = _get_config()
+    if config.get("useLegacySwitchMethod"):
+        return await _do_switch_display_to_legacy(connector)
+    return await _do_switch_display_to(connector)
+
+async def _do_switch_display_to(connector):
+    connectors = await _list_connectors()
+    for off_connector in connectors:
+        if off_connector != connector:
+            await _set_connector_force(connector, "off")
+    await _set_connector_force(connector, "on")
+    await _trigger_hotplug(connector)
+
+
+async def _do_switch_display_to_legacy(connector: str):
+    try:
+        gamescope_unit = _current_gamescope_unit()
+        if not gamescope_unit:
+            error = "Couldn't find a running gamescope-session-plus@ unit. Ensure you're in gaming mode."
+            decky_plugin.logger.error(error)
+            return {"ok": False, "error": error}
+
+        set_env = _run_as_user(["systemctl", "--user", "set-environment", f"OUTPUT_CONNECTOR={connector}"])
+        if set_env.returncode != 0:
+            decky_plugin.logger.error(f"set-environment failed: {set_env.stderr}")
+            return {"ok": False, "error": set_env.stderr}
+
+        restart = _run_as_user(["systemctl", "--user", "restart", gamescope_unit])
+        if restart.returncode != 0:
+            decky_plugin.logger.error(f"restart failed: {restart.stderr}")
+            return {"ok": False, "error": restart.stderr}
+
+        await asyncio.sleep(2)
+
+        audio_restart = _run_as_user(["systemctl", "--user", "restart", "wireplumber.service", "pipewire.service", "pipewire-pulse.service"])
+        if audio_restart.returncode != 0:
+            decky_plugin.logger.warning(f"Audio stack restart after switch encountered an issue: {audio_restart.stderr}")
+
+        settings = _load_settings()
+        default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
+        if default_audio:
+            audio_result = await _set_default_sink_with_retry(default_audio)
+            if not audio_result["ok"]:
+                decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
+
+        return {"ok": True}
+    except Exception as e:
+        decky_plugin.logger.error(f"switch_display failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def _trigger_hotplug(connector: tuple):
+    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "trigger_hotplug")
+    try:
+        with open(path, "w") as trigger_file:
+            trigger_file.write("1")
+    except Exception as e:
+        decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for {connector[1]} of card {connector[0]}: {e}")
 
 
 def _list_audio_sinks():
@@ -224,8 +380,11 @@ class Plugin:
             config["usernameOverride"] = value or None
 
         if "defaultDisplay" in patch:
-            value = (patch["defaultDisplay"] or "").strip()
-            config["defaultDisplay"] = value or None
+            value = patch["defaultDisplay"]
+            if not value:
+                config["defaultDisplay"] = None
+            else:
+                config["defaultDisplay"] = list(value)
 
         if "useLegacySwitchMethod" in patch:
             config["useLegacySwitchMethod"] = bool(patch["useLegacySwitchMethod"])
@@ -240,19 +399,12 @@ class Plugin:
         _save_settings(settings)
         return {"ok": True}
 
-    async def get_current_output(self):
-        result = _run_as_user(["systemctl", "--user", "show-environment"])
-        for line in result.stdout.splitlines():
-            if line.startswith("OUTPUT_CONNECTOR="):
-                return line.split("=", 1)[1]
-        return None
-
     async def get_state(self):
         settings = _load_settings()
         display_settings = settings.get("displays", {})
         audio_settings = settings.get("audio", {})
 
-        connected_displays = set(_list_connected_displays())
+        connected_displays = set(_list_connected_connectors())
         all_display_ids = sorted(connected_displays | set(display_settings.keys()))
         displays = []
         for display_id in all_display_ids:
@@ -283,7 +435,7 @@ class Plugin:
         return {
             "displays": displays,
             "audio": audio,
-            "currentDisplay": await self.get_current_output(),
+            "currentDisplay": await _get_current_connector(),
             "currentAudio": _get_default_sink(),
         }
 
@@ -327,43 +479,7 @@ class Plugin:
             return {"ok": False, "error": str(e)}
 
     async def switch_display(self, connector: str):
-        return await self._do_switch_display(connector)
-
-    async def _do_switch_display(self, connector: str):
-        try:
-            gamescope_unit = _current_gamescope_unit()
-            if not gamescope_unit:
-                error = "Couldn't find a running gamescope-session-plus@ unit. Ensure you're in gaming mode."
-                decky_plugin.logger.error(error)
-                return {"ok": False, "error": error}
-
-            set_env = _run_as_user(["systemctl", "--user", "set-environment", f"OUTPUT_CONNECTOR={connector}"])
-            if set_env.returncode != 0:
-                decky_plugin.logger.error(f"set-environment failed: {set_env.stderr}")
-                return {"ok": False, "error": set_env.stderr}
-
-            restart = _run_as_user(["systemctl", "--user", "restart", gamescope_unit])
-            if restart.returncode != 0:
-                decky_plugin.logger.error(f"restart failed: {restart.stderr}")
-                return {"ok": False, "error": restart.stderr}
-
-            await asyncio.sleep(2)
-
-            audio_restart = _run_as_user(["systemctl", "--user", "restart", "wireplumber.service", "pipewire.service", "pipewire-pulse.service"])
-            if audio_restart.returncode != 0:
-                decky_plugin.logger.warning(f"Audio stack restart after switch encountered an issue: {audio_restart.stderr}")
-
-            settings = _load_settings()
-            default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
-            if default_audio:
-                audio_result = await _set_default_sink_with_retry(default_audio)
-                if not audio_result["ok"]:
-                    decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
-
-            return {"ok": True}
-        except Exception as e:
-            decky_plugin.logger.error(f"switch_display failed: {e}")
-            return {"ok": False, "error": str(e)}
+        return await _switch_display_to(connector)
 
     async def _apply_default_display_if_configured(self, source: str):
         config = _get_config()
@@ -371,12 +487,12 @@ class Plugin:
         if not default_display:
             return
 
-        current = await self.get_current_output()
+        current = await _get_current_connector()
         if current == default_display:
             return
 
         decky_plugin.logger.info(f"Applying default display '{default_display}' ({source})")
-        result = await self._do_switch_display(default_display)
+        result = await _switch_display_to(default_display)
         if not result.get("ok"):
             decky_plugin.logger.warning(f"Couldn't apply default display on {source}: {result.get('error')}")
 
