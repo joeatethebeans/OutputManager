@@ -237,9 +237,10 @@ async def _do_switch_display_to(connector):
     connectors = await _list_connectors()
     for off_connector in connectors:
         if off_connector != connector:
-            await _set_connector_force(connector, "off")
+            await _set_connector_force(off_connector, "off")
     await _set_connector_force(connector, "on")
     await _trigger_hotplug(connector)
+    return {"ok": True}
 
 
 async def _do_switch_display_to_legacy(connector: str):
