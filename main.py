@@ -383,7 +383,7 @@ class Plugin:
             if not value:
                 config["defaultDisplay"] = None
             else:
-                config["defaultDisplay"] = list(value)
+                config["defaultDisplay"] = value
 
         if "useLegacySwitchMethod" in patch:
             config["useLegacySwitchMethod"] = bool(patch["useLegacySwitchMethod"])
