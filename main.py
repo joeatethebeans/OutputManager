@@ -95,7 +95,7 @@ def _run_as_user(command):
 
 def _current_gamescope_unit():
     config = _get_config()
-    glob_pattern = config.get("gamescopeUnitGlob") or DEFAULT_CONFIG["gamescopeUnitGlob"]
+    glob_pattern = config.get("legacyGamescopeUnitGlob") or DEFAULT_CONFIG["legacyGamescopeUnitGlob"]
     result = _run_as_user(
         ["systemctl", "--user", "list-units", "--type=service", "--no-legend", glob_pattern]
     )
