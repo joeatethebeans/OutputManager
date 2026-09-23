@@ -113,40 +113,39 @@ async def _list_connectors():
         entries = os.listdir(drm_dir)
         for entry in entries:
             if os.path.exists(os.path.join(drm_dir, entry, "connector_id")) and "Writeback" not in entry:
-                card_part, connector_name = entry.split("-", 1)
-                card_number = int(card_part[4:])
+                connector_name = entry.split("-", 1)[1]
                 connectors.append(connector_name)
     except Exception as e:
         decky_plugin.logger.error(f"_list_connectors: couldn't get connectors from {drm_dir}: {e}")
     return connectors
 
 
-async def _set_connector_force(connector: tuple, force: str):
-    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "force")
+async def _set_connector_force(connector: str, force: str):
+    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "force")
     try:
         with open(path, "w") as force_file:
             force_file.write(force)
     except Exception as e:
-        decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector[1]} of card {connector[0]} to {force}: {e}")
+        decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector} to {force}: {e}")
 
 
-async def _get_connector_connected(connector: tuple):
-    path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "status")
+async def _get_connector_connected(connector: str):
+    path = os.path.join("/sys/class/drm", f"card0-{connector}", "status")
     try:
         with open(path, "r") as status_file:
             return status_file.read().strip() == "connected"
     except Exception as e:
-        decky_plugin.logger.error(f"_get_connector_connected: couldn't get \"connected\" status of connector {connector[1]} of card {connector[0]}: {e}")
+        decky_plugin.logger.error(f"_get_connector_connected: couldn't get connected status of connector {connector}: {e}")
         return False
 
 
-async def _get_connector_enabled(connector: tuple):
-    path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "enabled")
+async def _get_connector_enabled(connector: str):
+    path = os.path.join("/sys/class/drm", f"card0-{connector}", "enabled")
     try:
         with open(path, "r") as enabled_file:
             return enabled_file.read().strip() == "enabled"
     except Exception as e:
-        decky_plugin.logger.error(f"_get_connector_enabled: couldn't get \"enabled\" status of connector {connector[1]} of card {connector[0]}: {e}")
+        decky_plugin.logger.error(f"_get_connector_enabled: couldn't get enabled status of connector {connector}: {e}")
         return False
 
 
@@ -175,7 +174,7 @@ async def _do_get_current_connector_legacy():
     result = _run_as_user(["systemctl", "--user", "show-environment"])
     for line in result.stdout.splitlines():
         if line.startswith("OUTPUT_CONNECTOR="):
-            return None, line.split("=", 1)[1]
+            return line.split("=", 1)[1]
     return None
 
 
@@ -280,13 +279,13 @@ async def _do_switch_display_to_legacy(connector: str):
         return {"ok": False, "error": str(e)}
 
 
-async def _trigger_hotplug(connector: tuple):
-    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "trigger_hotplug")
+async def _trigger_hotplug(connector: str):
+    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "trigger_hotplug")
     try:
         with open(path, "w") as trigger_file:
             trigger_file.write("1")
     except Exception as e:
-        decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for {connector[1]} of card {connector[0]}: {e}")
+        decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for connector {connector}: {e}")
 
 
 def _list_audio_sinks():
