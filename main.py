@@ -219,8 +219,7 @@ async def _do_list_connected_connectors_legacy():
             continue
         if state != "connected":
             continue
-        card_part, connector_name = name.split("-", 1)
-        card_number = int(card_part[4:])
+        connector_name = name.split("-", 1)[1]
         connector = connector_name
         if connector not in outputs:
             outputs.append(connector)
