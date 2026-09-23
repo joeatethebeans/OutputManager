@@ -7,6 +7,8 @@ import asyncio
 
 import decky_plugin
 
+DESKTOP_MODE_POLL_INTERVAL_SECONDS = 5
+
 SETTINGS_FILE = os.path.join(decky_plugin.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 
 DEFAULT_CONFIG = {
@@ -183,10 +185,16 @@ async def _set_default_sink_with_retry(sink_id, attempts=12, delay_seconds=1.0):
         "error": f"'{sink_id}' did not became available after {attempts} attempts: {last_error}",
     }
 
+def _is_desktop_session_active():
+    result = _run_as_user(["pgrep", "-x", "plasmashell"])
+    return result.returncode == 0
+
 class Plugin:
     async def _main(self):
         decky_plugin.logger.info("Output Manager loaded")
-        self._background_task = asyncio.create_task(self._background_loop())
+        self._suspend_task = asyncio.create_task(self._suspend_task())
+        self._desktop_mode_task = asyncio.create_task(self._desktop_mode_task())
+        self._boot()
 
     async def _unload(self):
         decky_plugin.logger.info("Output Manager unloaded")
@@ -372,10 +380,11 @@ class Plugin:
         if not result.get("ok"):
             decky_plugin.logger.warning(f"Couldn't apply default display on {source}: {result.get('error')}")
 
-    async def _background_loop(self):
+    async def _boot(self):
         await asyncio.sleep(5)
-        await self._apply_default_display_if_configured("gaming mode start")
+        await self._apply_default_display_if_configured("boot")
 
+    async def _suspend_task(self):
         last_monotonic = time.monotonic()
         last_boottime = time.clock_gettime(time.CLOCK_BOOTTIME)
 
@@ -392,3 +401,22 @@ class Plugin:
             if gap > RESUME_GAP_THRESHOLD_SECONDS:
                 decky_plugin.logger.info(f"Detected resume from suspend (gap {gap:.1f}s)")
                 await self._apply_default_display_if_configured("resume from suspend")
+
+    async def _desktop_mode_task(self):
+        await asyncio.sleep(5)
+        was_desktop = _is_desktop_session_active()
+
+        while True:
+            await asyncio.sleep(DESKTOP_MODE_POLL_INTERVAL_SECONDS)
+            is_desktop = _is_desktop_session_active()
+
+            if is_desktop and not was_desktop:
+                decky_plugin.logger.info("Entered Desktop Mode, releasing forced displays")
+                config = _get_config()
+                if not config.get("useLegacySwitcher"):
+                    await _unspecify_all_connectors()
+            elif was_desktop and not is_desktop:
+                decky_plugin.logger.info("Entered Gaming Mode, defaulting outputs")
+                await self._apply_default_display_if_configured("gaming mode resume")
+
+            was_desktop = is_desktop
