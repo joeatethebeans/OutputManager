@@ -527,7 +527,7 @@ class Plugin:
             if is_desktop and not was_desktop:
                 decky_plugin.logger.info("Entered Desktop Mode, releasing forced displays")
                 config = _get_config()
-                if not config.get("useLegacySwitcher"):
+                if not config.get("useLegacySwitchMethod"):
                     await _unspecify_all_connectors()
             elif was_desktop and not is_desktop:
                 decky_plugin.logger.info("Entered Gaming Mode, defaulting outputs")
