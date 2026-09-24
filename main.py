@@ -121,6 +121,11 @@ async def _list_connectors():
 
 async def _set_connector_force(connector: str, force: str):
     path = os.path.join("/sys/kernel/debug/dri", "0", connector, "force")
+    config = _get_config()
+    internal_connector = config.get("steamDeckInternalConnector") or DEFAULT_CONFIG["steamDeckInternalConnector"]
+    if connector == internal_connector and force == "off":
+        decky_plugin.logger.info(f"_set_connector_force: skipping steam deck internal display connector {connector} force off")
+        return
     try:
         with open(path, "w") as force_file:
             force_file.write(force)
