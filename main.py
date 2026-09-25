@@ -135,11 +135,27 @@ async def _set_connector_force(connector: str, force: str):
         decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector} to {force}: {e}")
 
 
-async def _get_connector_connected(connector: str):
-    path = os.path.join("/sys/class/drm", f"card0-{connector}", "status")
+async def _get_connector_force(connector: str):
+    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "force")
     try:
-        with open(path, "r") as status_file:
-            return status_file.read().strip() == "connected"
+        with open(path, "r") as force_file:
+            return force_file.read().strip()
+    except Exception as e:
+        decky_plugin.logger.error(f"_get_connector_force: couldn't get connector {connector} force value: {e}")
+
+
+async def _get_connector_connected(connector: str):
+    status_path = os.path.join("/sys/class/drm", f"card0-{connector}", "status")
+    force = await _get_connector_force(connector)
+    try:
+        if force == "off":
+            with open(status_path, "w") as status_file:
+                status_file.write("detect")
+        with open(status_path, "r") as status_file:
+            connected = status_file.read().strip()
+        if force == "off":
+            await _set_connector_force(connector, force)
+        return connected == "connected"
     except Exception as e:
         decky_plugin.logger.error(f"_get_connector_connected: couldn't get connected status of connector {connector}: {e}")
         return False
@@ -193,15 +209,10 @@ async def _list_connected_connectors():
 
 async def _do_list_connected_connectors():
     connectors = await _list_connectors()
-    return_connector = await _get_current_connector()
-    await _unspecify_all_connectors()
     connected = []
     for connector in connectors:
-        await _trigger_hotplug(connector)
         if await _get_connector_connected(connector):
             connected.append(connector)
-    if return_connector is not None:
-        await _switch_display_to(return_connector)
     return connected
 
 
