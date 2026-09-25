@@ -310,7 +310,7 @@ async def _trigger_hotplug(connector: str):
     path = os.path.join("/sys/kernel/debug/dri", "0", connector, "trigger_hotplug")
     try:
         with open(path, "w") as trigger_file:
-            trigger_file.write("1")
+            trigger_file.write("1\n") #the parser used by the kernel defaults to 0 if given only 1 byte. added a new line prevents this
     except Exception as e:
         decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for connector {connector}: {e}")
 
