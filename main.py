@@ -23,6 +23,8 @@ DEFAULT_CONFIG = {
 RESUME_POLL_INTERVAL_SECONDS = 10
 RESUME_GAP_THRESHOLD_SECONDS = 5
 
+lock = asyncio.Lock()
+
 def _load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -238,12 +240,13 @@ async def _switch_display_to(connector):
     return await _do_switch_display_to(connector)
 
 async def _do_switch_display_to(connector):
-    connectors = await _list_connectors()
-    for off_connector in connectors:
-        if off_connector != connector:
-            await _set_connector_force(off_connector, "off")
-    await _set_connector_force(connector, "on")
-    await _trigger_hotplug(connector)
+    async with lock:
+        connectors = await _list_connectors()
+        for off_connector in connectors:
+            if off_connector != connector:
+                await _set_connector_force(off_connector, "off")
+        await _set_connector_force(connector, "unspecified")
+        await _trigger_hotplug(connector)
 
     settings = _load_settings()
     default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
@@ -416,7 +419,8 @@ class Plugin:
         display_settings = settings.get("displays", {})
         audio_settings = settings.get("audio", {})
 
-        connected_displays = set(await _list_connected_connectors())
+        async with lock:
+            connected_displays = set(await _list_connected_connectors())
         all_display_ids = sorted(connected_displays | set(display_settings.keys()))
         displays = []
         for display_id in all_display_ids:
