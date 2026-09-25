@@ -1,16 +1,14 @@
 # Output Manager (Decky plugin)
 
 Switch Steam Gaming Mode's display and audio outputs from the Quick Access Menu.
-Switching displays restarts Gaming Mode, it is not a live switch.
 
 ## Compatibility
 
-This plugin **only** works on Bazzite, ChimeraOS and other SteamOS derivatives that expose the *OUTPUT_CONNECTOR* variable in the gamescope session. This plugin **does NOT** work on vanilla SteamOS, and as such cannot be submitted to the Decky Plugin Store.
+By default, the plugin only supports AMD Radeon GPUs that use the AMDGPU Linux Kernel Driver. For non-AMD GPUs, there's a legacy switch method that can be enabled in the settings that uses Gamescope Plus' `OUTPUT_CONNECTOR` variable. The legacy switch method only works on operating systems that implement Gamescope Plus (Bazzite, ChimeraOS, etc).
 
 ## Features
 
-- **Displays section**: tap a connected display to switch to it. This
-  restarts the gamescope session.
+- **Displays section**: tap a connected display to switch to it.
 - **Audio section**: tap a known audio output to make it the default sink
   immediately.
 - **Manage Outputs**: a full list of every display/audio output you've
@@ -27,7 +25,7 @@ This plugin **only** works on Bazzite, ChimeraOS and other SteamOS derivatives t
 
 ## Installation
 
-As this plugin is not available on the Decky Plugin Store, it must be installed as a zip file through the Decky Developer tab.
+As this plugin is not yet available on the Decky Plugin Store, it must be installed as a zip file through the Decky Developer tab.
 
 1. Go to Decky in the quick access menu and go to Settings → General and toggle Developer Mode on.
 2. Go to Settings → Developer → Install Plugin From ZIP File
