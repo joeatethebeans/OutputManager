@@ -15,9 +15,6 @@ DEFAULT_CONFIG = {
     "targetUid": 1000,
     "usernameOverride": None,
     "defaultDisplay": None,
-    "useLegacySwitchMethod": False,
-    "legacyGamescopeUnitGlob": "gamescope-session-plus@*.service",
-    "skipLegacyRestartWarning": False,
 }
 
 RESUME_POLL_INTERVAL_SECONDS = 10
@@ -94,19 +91,6 @@ def _run_as_user(command):
     return subprocess.run(full_command, capture_output=True, text=True, env=_clean_subprocess_env())
 
 
-def _current_gamescope_unit():
-    config = _get_config()
-    glob_pattern = config.get("legacyGamescopeUnitGlob") or DEFAULT_CONFIG["legacyGamescopeUnitGlob"]
-    result = _run_as_user(
-        ["systemctl", "--user", "list-units", "--type=service", "--no-legend", glob_pattern]
-    )
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line:
-            return line.split()[0]
-    return None
-
-
 async def _list_connectors():
     connectors = []
     drm_dir = "/sys/class/drm"
@@ -178,13 +162,6 @@ async def _unspecify_all_connectors():
 
 
 async def _get_current_connector():
-    config = _get_config()
-    if config.get("useLegacySwitchMethod"):
-        return await _do_get_current_connector_legacy()
-    return await _do_get_current_connector()
-
-
-async def _do_get_current_connector():
     connectors = await _list_connectors()
     for connector in connectors:
         if await _get_connector_enabled(connector):
@@ -192,22 +169,7 @@ async def _do_get_current_connector():
     return None
 
 
-async def _do_get_current_connector_legacy():
-    result = _run_as_user(["systemctl", "--user", "show-environment"])
-    for line in result.stdout.splitlines():
-        if line.startswith("OUTPUT_CONNECTOR="):
-            return line.split("=", 1)[1]
-    return None
-
-
 async def _list_connected_connectors():
-    config = _get_config()
-    if config.get("useLegacySwitchMethod"):
-        return await _do_list_connected_connectors_legacy()
-    return await _do_list_connected_connectors()
-
-
-async def _do_list_connected_connectors():
     connectors = await _list_connectors()
     connected = []
     for connector in connectors:
@@ -216,41 +178,7 @@ async def _do_list_connected_connectors():
     return connected
 
 
-async def _do_list_connected_connectors_legacy():
-    outputs = []
-    drm_dir = "/sys/class/drm"
-    try:
-        entries = os.listdir(drm_dir)
-    except Exception as e:
-        decky_plugin.logger.error(f"_list_connected_displays: couldn't list {drm_dir}: {e}")
-        return outputs
-
-    for name in entries:
-        status_path = os.path.join(drm_dir, name, "status")
-        if not os.path.isfile(status_path):
-            continue
-        try:
-            with open(status_path, "r") as f:
-                state = f.read().strip()
-        except Exception as e:
-            decky_plugin.logger.error(f"_list_connected_displays: couldn't read {status_path}: {e}")
-            continue
-        if state != "connected":
-            continue
-        connector_name = name.split("-", 1)[1]
-        connector = connector_name
-        if connector not in outputs:
-            outputs.append(connector)
-
-    return sorted(outputs)
-
 async def _switch_display_to(connector):
-    config = _get_config()
-    if config.get("useLegacySwitchMethod"):
-        return await _do_switch_display_to_legacy(connector)
-    return await _do_switch_display_to(connector)
-
-async def _do_switch_display_to(connector):
     async with lock:
         connectors = await _list_connectors()
         for off_connector in connectors:
@@ -267,43 +195,6 @@ async def _do_switch_display_to(connector):
             decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
 
     return {"ok": True}
-
-
-async def _do_switch_display_to_legacy(connector: str):
-    try:
-        gamescope_unit = _current_gamescope_unit()
-        if not gamescope_unit:
-            error = "Couldn't find a running gamescope-session-plus@ unit. Ensure you're in gaming mode."
-            decky_plugin.logger.error(error)
-            return {"ok": False, "error": error}
-
-        set_env = _run_as_user(["systemctl", "--user", "set-environment", f"OUTPUT_CONNECTOR={connector}"])
-        if set_env.returncode != 0:
-            decky_plugin.logger.error(f"set-environment failed: {set_env.stderr}")
-            return {"ok": False, "error": set_env.stderr}
-
-        restart = _run_as_user(["systemctl", "--user", "restart", gamescope_unit])
-        if restart.returncode != 0:
-            decky_plugin.logger.error(f"restart failed: {restart.stderr}")
-            return {"ok": False, "error": restart.stderr}
-
-        await asyncio.sleep(2)
-
-        audio_restart = _run_as_user(["systemctl", "--user", "restart", "wireplumber.service", "pipewire.service", "pipewire-pulse.service"])
-        if audio_restart.returncode != 0:
-            decky_plugin.logger.warning(f"Audio stack restart after switch encountered an issue: {audio_restart.stderr}")
-
-        settings = _load_settings()
-        default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
-        if default_audio:
-            audio_result = await _set_default_sink_with_retry(default_audio)
-            if not audio_result["ok"]:
-                decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
-
-        return {"ok": True}
-    except Exception as e:
-        decky_plugin.logger.error(f"switch_display failed: {e}")
-        return {"ok": False, "error": str(e)}
 
 
 async def _trigger_hotplug(connector: str):
@@ -411,16 +302,6 @@ class Plugin:
                 config["defaultDisplay"] = None
             else:
                 config["defaultDisplay"] = value
-
-        if "useLegacySwitchMethod" in patch:
-            config["useLegacySwitchMethod"] = bool(patch["useLegacySwitchMethod"])
-
-        if "legacyGamescopeUnitGlob" in patch:
-            value = (patch["legacyGamescopeUnitGlob"] or "").strip()
-            config["legacyGamescopeUnitGlob"] = value or DEFAULT_CONFIG["legacyGamescopeUnitGlob"]
-
-        if "skipLegacyRestartWarning" in patch:
-            config["skipLegacyRestartWarning"] = bool(patch["skipLegacyRestartWarning"])
 
         _save_settings(settings)
         return {"ok": True}
@@ -555,9 +436,7 @@ class Plugin:
 
             if is_desktop and not was_desktop:
                 decky_plugin.logger.info("Entered Desktop Mode, releasing forced displays")
-                config = _get_config()
-                if not config.get("useLegacySwitchMethod"):
-                    await _unspecify_all_connectors()
+                await _unspecify_all_connectors()
             elif was_desktop and not is_desktop:
                 decky_plugin.logger.info("Entered Gaming Mode, defaulting outputs")
                 await self._apply_default_display_if_configured("gaming mode resume")
