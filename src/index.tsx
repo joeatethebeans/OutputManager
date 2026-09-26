@@ -4,8 +4,6 @@ import {
     ButtonItem,
     ToggleField,
     TextField,
-    ConfirmModal,
-    showModal,
     staticClasses,
     Navigation
 } from "@decky/ui";
@@ -42,9 +40,6 @@ interface Config {
     targetUid: number;
     usernameOverride: string | null;
     defaultDisplay: string | null;
-    "useLegacySwitchMethod": boolean;
-    legacyGamescopeUnitGlob: string;
-    skipLegacyRestartWarning: boolean;
 }
 
 const getState = callable<[], OutputState>("get_state");
@@ -210,24 +205,6 @@ const Content: FC = () => {
         }
     };
 
-    const onSwitchDisplay = (id: string) => {
-        if (!config.useLegacySwitchMethod || config.skipLegacyRestartWarning) {
-            doSwitchDisplay(id);
-            return;
-        }
-        showModal(
-            <RestartWarningModal
-                onConfirm={async (neverShowAgain) => {
-                    if (neverShowAgain) {
-                        await setConfig({ skipLegacyRestartWarning: true });
-                        await refreshConfig();
-                    }
-                    doSwitchDisplay(id);
-                }}
-            />,
-        );
-    };
-
     const onSwitchAudio = async (id: string) => {
         setBusyId(id);
         setError(null);
@@ -253,7 +230,7 @@ const Content: FC = () => {
                         <ButtonItem
                             layout="below"
                             disabled={busyId !== null}
-                            onClick={() => onSwitchDisplay(d.id)}
+                            onClick={() => doSwitchDisplay(d.id)}
                         >
                             {d.label}
                             {state.currentDisplay === d.id ? " • active" : ""}
@@ -478,36 +455,6 @@ const EditOutput: FC<{
     );
 };
 
-const RestartWarningModal: FC<{
-    closeModal?: () => void;
-    onConfirm: (neverShowAgain: boolean) => void;
-}> = ({ closeModal, onConfirm }) => {
-    const [neverShowAgain, setNeverShowAgain] = useState(false);
-
-    return (
-        <ConfirmModal
-            strTitle="Switch Display?"
-            strDescription="Switching displays restarts Gaming Mode. Any open games/applications will close. Are you sure you wish to proceed?"
-            strOKButtonText="Switch"
-            strCancelButtonText="Cancel"
-            onOK={() => {
-                onConfirm(neverShowAgain);
-                closeModal?.();
-            }}
-            onCancel={() => closeModal?.()}
-        >
-            <PanelSectionRow></PanelSectionRow>
-            <PanelSectionRow>
-                <ToggleField
-                    label="Don't show this again"
-                    checked={neverShowAgain}
-                    onChange={setNeverShowAgain}
-                />
-            </PanelSectionRow>
-        </ConfirmModal>
-    );
-};
-
 const SettingsPage: FC<{
     config: Config;
     displays: OutputItem[];
@@ -519,10 +466,6 @@ const SettingsPage: FC<{
     const [username, setUsername] = useState(config.usernameOverride ?? "");
     const [internalDisplayConnector, setInternalDisplayConnector] = useState(
         config.steamDeckInternalConnector ?? "",
-    );
-    const [useLegacySwitcher, setUseLegacySwitcher] = useState(config.useLegacySwitchMethod);
-    const [legacyGamescopeUnitGlob, setLegacyGamescopeUnitGlob] = useState(
-        config.legacyGamescopeUnitGlob,
     );
 
     const defaultDisplayLabel = config.defaultDisplay
@@ -586,35 +529,6 @@ const SettingsPage: FC<{
                         onChange={(e) => {
                             setInternalDisplayConnector(e.target.value);
                             onUpdate({ steamDeckInternalConnector: e.target.value });
-                        }}
-                    />
-                </PanelSectionRow>
-            </PanelSection>
-
-            <PanelSection title="Non-AMD GPU Switcher">
-                <PanelSectionRow>
-                    Only use the legacy switcher if you're on a device that does not have an AMD GPU.
-                </PanelSectionRow>
-
-                <PanelSectionRow>
-                    <ToggleField
-                        label="Use Legacy Non-AMD Switcher"
-                        checked={useLegacySwitcher}
-                        onChange={(checked) => {
-                            setUseLegacySwitcher(checked);
-                            onUpdate({ useLegacySwitchMethod: checked });
-                        }}
-                    />
-                </PanelSectionRow>
-
-                <PanelSectionRow>
-                    <TextField
-                        label="Gamescope unit glob"
-                        description="systemd --user unit pattern used to find the gamescope session"
-                        value={legacyGamescopeUnitGlob}
-                        onChange={(e) => {
-                            setLegacyGamescopeUnitGlob(e.target.value);
-                            onUpdate({ legacyGamescopeUnitGlob: e.target.value });
                         }}
                     />
                 </PanelSectionRow>

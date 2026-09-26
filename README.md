@@ -4,7 +4,7 @@ Switch Steam Gaming Mode's display and audio outputs from the Quick Access Menu.
 
 ## Compatibility
 
-By default, the plugin only supports AMD Radeon GPUs that use the AMDGPU Linux Kernel Driver. For non-AMD GPUs, there's a legacy switch method that can be enabled in the settings that uses Gamescope Plus' `OUTPUT_CONNECTOR` variable. The legacy switch method only works on operating systems that implement Gamescope Plus (Bazzite, ChimeraOS, etc).
+This plugin only supports AMD Radeon GPUs that use the AMDGPU Linux Kernel Driver.
 
 ## Features
 
