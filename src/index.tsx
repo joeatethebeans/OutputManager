@@ -28,6 +28,8 @@ interface OutputState {
     audio: OutputItem[];
     currentConnector: string | null;
     currentAudio: string | null;
+    connectorAudio: { id: string; label: string } | null
+    usingConnectorAudio: boolean
 }
 
 interface ActionResult {
@@ -45,6 +47,7 @@ interface Config {
 const getState = callable<[], OutputState>("get_state");
 const switchConnector = callable<[string], ActionResult>("switch_connector");
 const switchAudio = callable<[string], ActionResult>("switch_audio");
+const enableConnectorAudio = callable<[], ActionResult>("use_connector_sink");
 const updateOutput = callable<[OutputType, string, Record<string, unknown>], ActionResult>(
     "update_output",
 );
@@ -67,6 +70,7 @@ const Content: FC = () => {
     const [view, setView] = useState<View>({ name: "main" });
     const [busyId, setBusyId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [pickingOtherAudio, setPickingOtherAudio] = useState(false);
 
     const refresh = async () => {
         const s = await getState();
@@ -128,10 +132,13 @@ const Content: FC = () => {
             setView({ name: "manage" });
             return null;
         }
-        const defaultAudioLabel = item.defaultAudio
-            ? (state.audio.find((a: { id: any }) => a.id === item.defaultAudio)?.label ??
-              item.defaultAudio)
-            : "None";
+        const defaultAudioLabel =
+            item.defaultAudio === "connector"
+                ? "Connector Audio"
+                : item.defaultAudio
+                  ? (state.audio.find((a: { id: any }) => a.id === item.defaultAudio)?.label ??
+                    item.defaultAudio)
+                  : "None";
         return (
             <EditOutput
                 outputType={view.outputType}
@@ -199,6 +206,7 @@ const Content: FC = () => {
         const result = await switchConnector(id);
         setBusyId(null);
         if (result.ok) {
+            setPickingOtherAudio(false);
             refresh();
         } else {
             setError(result.error || "Switch failed");
@@ -209,6 +217,24 @@ const Content: FC = () => {
         setBusyId(id);
         setError(null);
         const result = await switchAudio(id);
+        setBusyId(null);
+        if (result.ok) {
+            setPickingOtherAudio(false);
+            refresh();
+        } else {
+            setError(result.error || "Switch failed");
+        }
+    };
+
+    const onToggleConnectorAudio = async (checked: boolean) => {
+        setError(null);
+        if (!checked) {
+            setPickingOtherAudio(true);
+            return;
+        }
+        setPickingOtherAudio(false);
+        setBusyId("connectorAudio");
+        const result = await enableConnectorAudio();
         setBusyId(null);
         if (result.ok) {
             refresh();
@@ -241,24 +267,42 @@ const Content: FC = () => {
             </PanelSection>
 
             <PanelSection title="Audio">
-                {visibleAudio.length === 0 && (
-                    <PanelSectionRow>
-                        No audio outputs shown. Use "Manage Outputs" below to unhide one.
-                    </PanelSectionRow>
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Use connector audio output"
+                        description={
+                            state.connectorAudio
+                                ? undefined
+                                : "This connector has no audio output"
+                        }
+                        checked={state.usingConnectorAudio && !pickingOtherAudio}
+                        disabled={!state.connectorAudio || busyId !== null}
+                        onChange={onToggleConnectorAudio}
+                    />
+                </PanelSectionRow>
+
+                {!(state.usingConnectorAudio && !pickingOtherAudio) && (
+                    <>
+                        {visibleAudio.length === 0 && (
+                            <PanelSectionRow>
+                                No audio outputs shown. Use "Manage Outputs" below to unhide one.
+                            </PanelSectionRow>
+                        )}
+                        {visibleAudio.map((a) => (
+                            <PanelSectionRow key={a.id}>
+                                <ButtonItem
+                                    layout="below"
+                                    disabled={busyId !== null}
+                                    onClick={() => onSwitchAudio(a.id)}
+                                >
+                                    {a.label}
+                                    {state.currentAudio === a.id ? " • active" : ""}
+                                    {busyId === a.id ? " • switching…" : ""}
+                                </ButtonItem>
+                            </PanelSectionRow>
+                        ))}
+                    </>
                 )}
-                {visibleAudio.map((a) => (
-                    <PanelSectionRow key={a.id}>
-                        <ButtonItem
-                            layout="below"
-                            disabled={busyId !== null}
-                            onClick={() => onSwitchAudio(a.id)}
-                        >
-                            {a.label}
-                            {state.currentAudio === a.id ? " • active" : ""}
-                            {busyId === a.id ? " • switching…" : ""}
-                        </ButtonItem>
-                    </PanelSectionRow>
-                ))}
             </PanelSection>
 
             {error && (
@@ -344,6 +388,12 @@ const PickDefaultAudio: FC<{
             <ButtonItem layout="below" onClick={() => onPick(null)}>
                 None
                 {current === null ? " • selected" : ""}
+            </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => onPick("connector")}>
+                Connector audio
+                {current === "connector" ? " • selected" : ""}
             </ButtonItem>
         </PanelSectionRow>
         {options.map((a) => (

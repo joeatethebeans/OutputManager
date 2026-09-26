@@ -215,8 +215,11 @@ async def _list_connected_connectors():
     return connected
 
 
-async def _switch_display_to(connector: tuple[int, str]):
 async def _switch_connector_to(connector: tuple[int, str]):
+    old_connector_sink = await _get_current_connector_sink()
+    old_connector_sink_id = old_connector_sink["id"] if old_connector_sink is not None else None
+    was_using_connector_audio = old_connector_sink_id is not None and old_connector_sink_id == _get_default_sink()
+
     async with lock:
         connectors = await _list_connectors()
         for off_connector in connectors:
@@ -226,9 +229,22 @@ async def _switch_connector_to(connector: tuple[int, str]):
         await _trigger_hotplug(connector)
 
     settings = _load_settings()
-    default_audio = settings.get("displays", {}).get(_connector_to_string(connector), {}).get("defaultAudio")
-    if default_audio:
     default_audio = settings.get("connectors", {}).get(_connector_to_string(connector), {}).get("defaultAudio")
+
+    use_connector_audio = default_audio == "connector" or (default_audio is None and was_using_connector_audio)
+    if use_connector_audio:
+        config = _get_config()
+        internal_connector = config.get("steamDeckInternalConnector") or DEFAULT_CONFIG["steamDeckInternalConnector"]
+        if connector == _connector_string_to_tuple(internal_connector):
+            decky_plugin.logger.info(f"_switch_connector_to: skipping connector audio for steam deck internal display connector {connector[1]} of card {connector[0]}")
+        else:
+            attempts = 12 if default_audio == "connector" else 5
+            connector_sink = await _wait_for_connector_sink(connector, ignore_sink_id=old_connector_sink_id, attempts=attempts)
+            if connector_sink is not None:
+                audio_result = await _set_default_sink_with_retry(connector_sink["id"])
+                if not audio_result["ok"]:
+                    decky_plugin.logger.warning(f"Couldn't set connector audio for {connector[1]} of card {connector[0]}: {audio_result['error']}")
+    elif default_audio:
         audio_result = await _set_default_sink_with_retry(default_audio)
         if not audio_result["ok"]:
             decky_plugin.logger.warning(f"Couldn't set default audio for {connector[1]} of card {connector[0]}: {audio_result['error']}")
@@ -245,6 +261,18 @@ async def _trigger_hotplug(connector: tuple[int, str]):
         decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for connector {connector[1]} of card {connector[0]}: {e}")
 
 
+def _get_card_audio_controller_address(card_number: int):
+    device_path = f"/sys/class/drm/card{card_number}/device"
+    try:
+        entries = os.listdir(device_path)
+        for entry in entries:
+            if entry.startswith("consumer:pci:"):
+                return entry.removeprefix("consumer:pci:")
+    except Exception as e:
+        decky_plugin.logger.error(f"_get_card_audio_controller_address: couldn't get audio controller address for card {card_number}: {e}")
+    return None
+
+
 def _list_audio_sinks():
     result = _run_as_user(["pactl", "-f", "json", "list", "sinks"])
     if result.returncode == 0:
@@ -256,7 +284,8 @@ def _list_audio_sinks():
                 if not name:
                     continue
                 description = sink.get("description") or name
-                sinks.append({"id": name, "description": description})
+                sysfs_path = sink.get("properties", {}).get("sysfs.path")
+                sinks.append({"id": name, "description": description, "sysfs_path": sysfs_path})
             return sinks
         except Exception as e:
             decky_plugin.logger.warning(f"_list_audio_sinks: JSON parse failed, falling back to shortform: {e}")
@@ -267,8 +296,52 @@ def _list_audio_sinks():
         parts = line.split("\t")
         if len(parts) >= 2:
             name = parts[1]
-            sinks.append({"id": name, "description": name})
+            sinks.append({"id": name, "description": name, "sysfs_path": None})
     return sinks
+
+
+def _split_audio_sinks(audio_controller_address):
+    sinks = _list_audio_sinks()
+    if audio_controller_address is None:
+        return None, sinks
+    connector_sink = None
+    other_sinks = []
+    for sink in sinks:
+        if sink["sysfs_path"] is None:
+            other_sinks.append(sink)
+            continue
+        if audio_controller_address in sink["sysfs_path"].split("/"):
+            if connector_sink is None:
+                connector_sink = sink
+            else:
+                decky_plugin.logger.warning(f"_split_audio_sinks: there are multiple audio sinks for the current connector, defaulting to the first")
+        else:
+            other_sinks.append(sink)
+    return connector_sink, other_sinks
+
+
+async def _wait_for_connector_sink(connector: tuple[int, str], ignore_sink_id=None, attempts=12, delay_seconds=1.0):
+    audio_controller_address = _get_card_audio_controller_address(connector[0])
+    if audio_controller_address is None:
+        return None
+    for attempt in range(attempts):
+        connector_sink, _ = _split_audio_sinks(audio_controller_address)
+        if connector_sink is not None:
+            if connector_sink["id"] != ignore_sink_id:
+                decky_plugin.logger.info(f"_wait_for_connector_sink: found sink {connector_sink['id']} for connector {connector[1]} of card {connector[0]} after {attempt + 1} attempt(s)")
+                return connector_sink
+            decky_plugin.logger.info(f"_wait_for_connector_sink: ignoring stale sink {ignore_sink_id} for connector {connector[1]} of card {connector[0]}")
+        await asyncio.sleep(delay_seconds)
+    decky_plugin.logger.warning(f"_wait_for_connector_sink: no sink appeared for connector {connector[1]} of card {connector[0]} after {attempts} attempts")
+    return None
+
+
+async def _get_current_connector_sink():
+    current_connector = await _get_current_connector()
+    if current_connector is None:
+        return None
+    connector_sink, _ = _split_audio_sinks(_get_card_audio_controller_address(current_connector[0]))
+    return connector_sink
 
 
 def _get_default_sink():
@@ -367,7 +440,11 @@ class Plugin:
                 "connected": connector_ids in parsed_connected_connectors,
             })
 
-        sinks = _list_audio_sinks()
+        current_connector = await _get_current_connector()
+        card_audio_address = None
+        if current_connector is not None:
+            card_audio_address = _get_card_audio_controller_address(current_connector[0])
+        connector_sink, sinks = _split_audio_sinks(card_audio_address)
         sink_descriptions = {s["id"]: s["description"] for s in sinks}
         connected_audio_ids = set(sink_descriptions.keys())
         all_audio_ids = sorted(connected_audio_ids | set(audio_settings.keys()))
