@@ -13,7 +13,7 @@ import { FC, useEffect, useState } from "react";
 import { FaGithub, FaDisplay } from "react-icons/fa6";
 import { SiBuymeacoffee } from "react-icons/si";
 
-type OutputType = "displays" | "audio";
+type OutputType = "connectors" | "audio";
 
 interface OutputItem {
     id: string;
@@ -24,10 +24,12 @@ interface OutputItem {
 }
 
 interface OutputState {
-    displays: OutputItem[];
+    connectors: OutputItem[];
     audio: OutputItem[];
-    currentDisplay: string | null;
+    currentConnector: string | null;
     currentAudio: string | null;
+    connectorAudio: { id: string; label: string } | null
+    usingConnectorAudio: boolean
 }
 
 interface ActionResult {
@@ -39,12 +41,13 @@ interface Config {
     "steamDeckInternalConnector": string;
     targetUid: number;
     usernameOverride: string | null;
-    defaultDisplay: string | null;
+    defaultConnector: string | null;
 }
 
 const getState = callable<[], OutputState>("get_state");
-const switchDisplay = callable<[string], ActionResult>("switch_display");
+const switchConnector = callable<[string], ActionResult>("switch_connector");
 const switchAudio = callable<[string], ActionResult>("switch_audio");
+const enableConnectorAudio = callable<[], ActionResult>("use_connector_sink");
 const updateOutput = callable<[OutputType, string, Record<string, unknown>], ActionResult>(
     "update_output",
 );
@@ -56,9 +59,9 @@ type View =
     | { name: "main" }
     | { name: "manage" }
     | { name: "edit"; outputType: OutputType; id: string }
-    | { name: "pickAudio"; displayId: string }
+    | { name: "pickAudio"; connectorId: string }
     | { name: "settings" }
-    | { name: "pickDefaultDisplay" }
+    | { name: "pickDefaultConnector" }
     | { name: "about" };
 
 const Content: FC = () => {
@@ -67,6 +70,7 @@ const Content: FC = () => {
     const [view, setView] = useState<View>({ name: "main" });
     const [busyId, setBusyId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [pickingOtherAudio, setPickingOtherAudio] = useState(false);
 
     const refresh = async () => {
         const s = await getState();
@@ -102,20 +106,20 @@ const Content: FC = () => {
     }
 
     if (view.name === "pickAudio") {
-        const display = state.displays.find((d) => d.id === view.displayId);
-        if (!display) {
+        const connector = state.connectors.find((d) => d.id === view.connectorId);
+        if (!connector) {
             setView({ name: "manage" });
             return null;
         }
         return (
             <PickDefaultAudio
-                current={display.defaultAudio ?? null}
+                current={connector.defaultAudio ?? null}
                 options={state.audio}
-                onBack={() => setView({ name: "edit", outputType: "displays", id: view.displayId })}
+                onBack={() => setView({ name: "edit", outputType: "connectors", id: view.connectorId })}
                 onPick={async (sinkId: any) => {
-                    await updateOutput("displays", view.displayId, { defaultAudio: sinkId });
+                    await updateOutput("connectors", view.connectorId, { defaultAudio: sinkId });
                     await refresh();
-                    setView({ name: "edit", outputType: "displays", id: view.displayId });
+                    setView({ name: "edit", outputType: "connectors", id: view.connectorId });
                 }}
             />
         );
@@ -128,10 +132,13 @@ const Content: FC = () => {
             setView({ name: "manage" });
             return null;
         }
-        const defaultAudioLabel = item.defaultAudio
-            ? (state.audio.find((a: { id: any }) => a.id === item.defaultAudio)?.label ??
-              item.defaultAudio)
-            : "None";
+        const defaultAudioLabel =
+            item.defaultAudio === "connector"
+                ? "Connector Audio"
+                : item.defaultAudio
+                  ? (state.audio.find((a: { id: any }) => a.id === item.defaultAudio)?.label ??
+                    item.defaultAudio)
+                  : "None";
         return (
             <EditOutput
                 outputType={view.outputType}
@@ -148,8 +155,8 @@ const Content: FC = () => {
                     setView({ name: "manage" });
                 }}
                 onPickDefaultAudio={
-                    view.outputType === "displays"
-                        ? () => setView({ name: "pickAudio", displayId: view.id })
+                    view.outputType === "connectors"
+                        ? () => setView({ name: "pickAudio", connectorId: view.id })
                         : undefined
                 }
             />
@@ -160,13 +167,13 @@ const Content: FC = () => {
         return (
             <SettingsPage
                 config={config}
-                displays={state.displays}
+                connectors={state.connectors}
                 onBack={() => setView({ name: "main" })}
                 onUpdate={async (patch) => {
                     await setConfig(patch);
                     await refreshConfig();
                 }}
-                onPickDefaultDisplay={() => setView({ name: "pickDefaultDisplay" })}
+                onPickDefaultConnector={() => setView({ name: "pickDefaultConnector" })}
             />
         );
     }
@@ -175,14 +182,14 @@ const Content: FC = () => {
         return <AboutPage onBack={() => setView({ name: "main" })} />;
     }
 
-    if (view.name === "pickDefaultDisplay") {
+    if (view.name === "pickDefaultConnector") {
         return (
-            <PickDefaultDisplay
-                current={config.defaultDisplay ?? null}
-                options={state.displays}
+            <PickDefaultConnector
+                current={config.defaultConnector ?? null}
+                options={state.connectors}
                 onBack={() => setView({ name: "settings" })}
                 onPick={async (id) => {
-                    await setConfig({ defaultDisplay: id });
+                    await setConfig({ defaultConnector: id });
                     await refreshConfig();
                     setView({ name: "settings" });
                 }}
@@ -190,15 +197,16 @@ const Content: FC = () => {
         );
     }
 
-    const visibleDisplays = state.displays.filter((d) => !d.hidden && d.connected);
+    const visibleConnectors = state.connectors.filter((d) => !d.hidden && d.connected);
     const visibleAudio = state.audio.filter((a) => !a.hidden && a.connected);
 
-    const doSwitchDisplay = async (id: string) => {
+    const doSwitchConnector = async (id: string) => {
         setBusyId(id);
         setError(null);
-        const result = await switchDisplay(id);
+        const result = await switchConnector(id);
         setBusyId(null);
         if (result.ok) {
+            setPickingOtherAudio(false);
             refresh();
         } else {
             setError(result.error || "Switch failed");
@@ -211,6 +219,24 @@ const Content: FC = () => {
         const result = await switchAudio(id);
         setBusyId(null);
         if (result.ok) {
+            setPickingOtherAudio(false);
+            refresh();
+        } else {
+            setError(result.error || "Switch failed");
+        }
+    };
+
+    const onToggleConnectorAudio = async (checked: boolean) => {
+        setError(null);
+        if (!checked) {
+            setPickingOtherAudio(true);
+            return;
+        }
+        setPickingOtherAudio(false);
+        setBusyId("connectorAudio");
+        const result = await enableConnectorAudio();
+        setBusyId(null);
+        if (result.ok) {
             refresh();
         } else {
             setError(result.error || "Switch failed");
@@ -219,21 +245,21 @@ const Content: FC = () => {
 
     return (
         <>
-            <PanelSection title="Displays">
-                {visibleDisplays.length === 0 && (
+            <PanelSection title="Connectors">
+                {visibleConnectors.length === 0 && (
                     <PanelSectionRow>
-                        No displays shown. Use "Manage Outputs" below to unhide one.
+                        No connectors shown. Use "Manage Outputs" below to unhide one.
                     </PanelSectionRow>
                 )}
-                {visibleDisplays.map((d) => (
+                {visibleConnectors.map((d) => (
                     <PanelSectionRow key={d.id}>
                         <ButtonItem
                             layout="below"
                             disabled={busyId !== null}
-                            onClick={() => doSwitchDisplay(d.id)}
+                            onClick={() => doSwitchConnector(d.id)}
                         >
                             {d.label}
-                            {state.currentDisplay === d.id ? " • active" : ""}
+                            {state.currentConnector === d.id ? " • active" : ""}
                             {busyId === d.id ? " • switching…" : ""}
                         </ButtonItem>
                     </PanelSectionRow>
@@ -241,24 +267,42 @@ const Content: FC = () => {
             </PanelSection>
 
             <PanelSection title="Audio">
-                {visibleAudio.length === 0 && (
-                    <PanelSectionRow>
-                        No audio outputs shown. Use "Manage Outputs" below to unhide one.
-                    </PanelSectionRow>
+                <PanelSectionRow>
+                    <ToggleField
+                        label="Use connector audio output"
+                        description={
+                            state.connectorAudio
+                                ? undefined
+                                : "This connector has no audio output"
+                        }
+                        checked={state.usingConnectorAudio && !pickingOtherAudio}
+                        disabled={!state.connectorAudio || busyId !== null}
+                        onChange={onToggleConnectorAudio}
+                    />
+                </PanelSectionRow>
+
+                {!(state.usingConnectorAudio && !pickingOtherAudio) && (
+                    <>
+                        {visibleAudio.length === 0 && (
+                            <PanelSectionRow>
+                                No audio outputs shown. Use "Manage Outputs" below to unhide one.
+                            </PanelSectionRow>
+                        )}
+                        {visibleAudio.map((a) => (
+                            <PanelSectionRow key={a.id}>
+                                <ButtonItem
+                                    layout="below"
+                                    disabled={busyId !== null}
+                                    onClick={() => onSwitchAudio(a.id)}
+                                >
+                                    {a.label}
+                                    {state.currentAudio === a.id ? " • active" : ""}
+                                    {busyId === a.id ? " • switching…" : ""}
+                                </ButtonItem>
+                            </PanelSectionRow>
+                        ))}
+                    </>
                 )}
-                {visibleAudio.map((a) => (
-                    <PanelSectionRow key={a.id}>
-                        <ButtonItem
-                            layout="below"
-                            disabled={busyId !== null}
-                            onClick={() => onSwitchAudio(a.id)}
-                        >
-                            {a.label}
-                            {state.currentAudio === a.id ? " • active" : ""}
-                            {busyId === a.id ? " • switching…" : ""}
-                        </ButtonItem>
-                    </PanelSectionRow>
-                ))}
             </PanelSection>
 
             {error && (
@@ -302,10 +346,10 @@ const ManageList: FC<{
             </PanelSectionRow>
         </PanelSection>
 
-        <PanelSection title="Displays">
-            {state.displays.map((d) => (
+        <PanelSection title="Connectors">
+            {state.connectors.map((d) => (
                 <PanelSectionRow key={d.id}>
-                    <ButtonItem layout="below" onClick={() => onSelect("displays", d.id)}>
+                    <ButtonItem layout="below" onClick={() => onSelect("connectors", d.id)}>
                         {d.label}
                         {!d.connected ? " (unplugged)" : ""}
                         {d.hidden ? " (hidden)" : ""}
@@ -346,6 +390,12 @@ const PickDefaultAudio: FC<{
                 {current === null ? " • selected" : ""}
             </ButtonItem>
         </PanelSectionRow>
+        <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => onPick("connector")}>
+                Connector audio
+                {current === "connector" ? " • selected" : ""}
+            </ButtonItem>
+        </PanelSectionRow>
         {options.map((a) => (
             <PanelSectionRow key={a.id}>
                 <ButtonItem layout="below" onClick={() => onPick(a.id)}>
@@ -357,13 +407,13 @@ const PickDefaultAudio: FC<{
     </PanelSection>
 );
 
-const PickDefaultDisplay: FC<{
+const PickDefaultConnector: FC<{
     current: string | null;
     options: OutputItem[];
     onBack: () => void;
     onPick: (id: string | null) => void;
 }> = ({ current, options, onBack, onPick }) => (
-    <PanelSection title="Default Display">
+    <PanelSection title="Default Connector">
         <PanelSectionRow>
             <ButtonItem layout="below" onClick={onBack}>
                 ← Back
@@ -406,7 +456,7 @@ const EditOutput: FC<{
     const [label, setLabel] = useState(item.label);
 
     return (
-        <PanelSection title={outputType === "displays" ? "Edit Display" : "Edit Audio Output"}>
+        <PanelSection title={outputType === "connectors" ? "Edit Connector" : "Edit Audio Output"}>
             <PanelSectionRow>
                 <ButtonItem layout="below" onClick={onBack}>
                     ← Back
@@ -419,7 +469,7 @@ const EditOutput: FC<{
 
             <PanelSectionRow>
                 <TextField
-                    label="Display name"
+                    label="Connector name"
                     value={label}
                     onChange={(e) => {
                         setLabel(e.target.value);
@@ -436,7 +486,7 @@ const EditOutput: FC<{
                 />
             </PanelSectionRow>
 
-            {outputType === "displays" && onPickDefaultAudio && (
+            {outputType === "connectors" && onPickDefaultAudio && (
                 <PanelSectionRow>
                     <ButtonItem layout="below" onClick={onPickDefaultAudio}>
                         Default audio: {defaultAudioLabel}
@@ -457,20 +507,20 @@ const EditOutput: FC<{
 
 const SettingsPage: FC<{
     config: Config;
-    displays: OutputItem[];
+    connectors: OutputItem[];
     onBack: () => void;
     onUpdate: (patch: Record<string, unknown>) => void;
-    onPickDefaultDisplay: () => void;
-}> = ({ config, displays, onBack, onUpdate, onPickDefaultDisplay }) => {
+    onPickDefaultConnector: () => void;
+}> = ({ config, connectors, onBack, onUpdate, onPickDefaultConnector }) => {
     const [uid, setUid] = useState(String(config.targetUid));
     const [username, setUsername] = useState(config.usernameOverride ?? "");
     const [internalDisplayConnector, setInternalDisplayConnector] = useState(
         config.steamDeckInternalConnector ?? "",
     );
 
-    const defaultDisplayLabel = config.defaultDisplay
-        ? (displays.find((d) => d.id === config.defaultDisplay)?.label ??
-          config.defaultDisplay)
+    const defaultConnectorLabel = config.defaultConnector
+        ? (connectors.find((d) => d.id === config.defaultConnector)?.label ??
+          config.defaultConnector)
         : "None";
 
     return (
@@ -483,8 +533,8 @@ const SettingsPage: FC<{
                 </PanelSectionRow>
 
                 <PanelSectionRow>
-                    <ButtonItem layout="below" onClick={onPickDefaultDisplay}>
-                        Default display: {defaultDisplayLabel}
+                    <ButtonItem layout="below" onClick={onPickDefaultConnector}>
+                        Default connector: {defaultConnectorLabel}
                     </ButtonItem>
                 </PanelSectionRow>
             </PanelSection>
@@ -545,7 +595,7 @@ const AboutPage: FC<{ onBack: () => void }> = ({ onBack }) => (
             </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-            Output Manager v1.3.0 — switches display and audio outputs from the
+            Output Manager v1.4.0 — switches GPU connectors and audio outputs from the
             Quick Access Menu.
         </PanelSectionRow>
         <PanelSectionRow>
