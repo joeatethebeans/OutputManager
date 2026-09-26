@@ -595,7 +595,7 @@ const AboutPage: FC<{ onBack: () => void }> = ({ onBack }) => (
             </ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-            Output Manager v1.3.0 — switches GPU connectors and audio outputs from the
+            Output Manager v1.4.0 — switches GPU connectors and audio outputs from the
             Quick Access Menu.
         </PanelSectionRow>
         <PanelSectionRow>
