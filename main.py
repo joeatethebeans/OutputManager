@@ -40,7 +40,32 @@ def _load_settings():
                 data.setdefault("displays", {})
                 data.setdefault("audio", {})
                 data.setdefault("config", {})
-                return data
+
+            #remove old invalidated configs from before multi-gpu support
+            invalidated = False
+
+            for key in list(data["displays"].keys()):
+                if ":" not in key:
+                    invalidated = True
+                    del data["displays"][key]
+                    decky_plugin.logger.info(f"_load_settings: deleted invalid display entry {key}")
+
+            default_display = data["config"].get("defaultDisplay")
+            if isinstance(default_display, str) and ":" not in default_display:
+                invalidated = True
+                data["config"]["defaultDisplay"] = None
+                decky_plugin.logger.info("_load_settings: deleted invalid default display config")
+
+            steam_deck_internal_connector = data["config"].get("steamDeckInternalConnector")
+            if isinstance(steam_deck_internal_connector, str) and ":" not in steam_deck_internal_connector:
+                invalidated = True
+                data["config"].pop("steamDeckInternalConnector", None)
+                decky_plugin.logger.info("_load_settings: deleted invalid steam deck internal connector entry")
+
+            if invalidated:
+                _save_settings(data)
+
+            return data
         except Exception:
             pass
     return {"displays": {}, "audio": {}, "config": {}}
