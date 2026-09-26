@@ -11,7 +11,7 @@ DESKTOP_MODE_POLL_INTERVAL_SECONDS = 5
 SETTINGS_FILE = os.path.join(decky_plugin.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 
 DEFAULT_CONFIG = {
-    "steamDeckInternalConnector": "eDP-1",
+    "steamDeckInternalConnector": "0:eDP-1",
     "targetUid": 1000,
     "usernameOverride": None,
     "defaultDisplay": None,
