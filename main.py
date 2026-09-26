@@ -11,7 +11,7 @@ DESKTOP_MODE_POLL_INTERVAL_SECONDS = 5
 SETTINGS_FILE = os.path.join(decky_plugin.DECKY_PLUGIN_SETTINGS_DIR, "settings.json")
 
 DEFAULT_CONFIG = {
-    "steamDeckInternalConnector": "eDP-1",
+    "steamDeckInternalConnector": "0:eDP-1",
     "targetUid": 1000,
     "usernameOverride": None,
     "defaultDisplay": None,
@@ -22,6 +22,16 @@ RESUME_GAP_THRESHOLD_SECONDS = 5
 
 lock = asyncio.Lock()
 
+
+def _connector_string_to_tuple(string: str):
+    connector_parts = string.split(":", 1)
+    return int(connector_parts[0]), connector_parts[1]
+
+
+def _connector_to_string(connector: tuple[int, str]):
+    return f"{connector[0]}:{connector[1]}"
+
+
 def _load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -30,7 +40,32 @@ def _load_settings():
                 data.setdefault("displays", {})
                 data.setdefault("audio", {})
                 data.setdefault("config", {})
-                return data
+
+            #remove old invalidated configs from before multi-gpu support
+            invalidated = False
+
+            for key in list(data["displays"].keys()):
+                if ":" not in key:
+                    invalidated = True
+                    del data["displays"][key]
+                    decky_plugin.logger.info(f"_load_settings: deleted invalid display entry {key}")
+
+            default_display = data["config"].get("defaultDisplay")
+            if isinstance(default_display, str) and ":" not in default_display:
+                invalidated = True
+                data["config"]["defaultDisplay"] = None
+                decky_plugin.logger.info("_load_settings: deleted invalid default display config")
+
+            steam_deck_internal_connector = data["config"].get("steamDeckInternalConnector")
+            if isinstance(steam_deck_internal_connector, str) and ":" not in steam_deck_internal_connector:
+                invalidated = True
+                data["config"].pop("steamDeckInternalConnector", None)
+                decky_plugin.logger.info("_load_settings: deleted invalid steam deck internal connector entry")
+
+            if invalidated:
+                _save_settings(data)
+
+            return data
         except Exception:
             pass
     return {"displays": {}, "audio": {}, "config": {}}
@@ -98,38 +133,40 @@ async def _list_connectors():
         entries = os.listdir(drm_dir)
         for entry in entries:
             if os.path.exists(os.path.join(drm_dir, entry, "connector_id")) and "Writeback" not in entry:
-                connector_name = entry.split("-", 1)[1]
-                connectors.append(connector_name)
+                connector_parts = entry.split("-", 1)
+                card_number = int(connector_parts[0].removeprefix("card"))
+                connector_name = connector_parts[1]
+                connectors.append((card_number, connector_name))
     except Exception as e:
         decky_plugin.logger.error(f"_list_connectors: couldn't get connectors from {drm_dir}: {e}")
     return connectors
 
 
-async def _set_connector_force(connector: str, force: str):
-    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "force")
+async def _set_connector_force(connector: tuple[int, str], force: str):
+    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "force")
     config = _get_config()
     internal_connector = config.get("steamDeckInternalConnector") or DEFAULT_CONFIG["steamDeckInternalConnector"]
-    if connector == internal_connector and force == "off":
-        decky_plugin.logger.info(f"_set_connector_force: skipping steam deck internal display connector {connector} force off")
+    if connector == _connector_string_to_tuple(internal_connector) and force == "off":
+        decky_plugin.logger.info(f"_set_connector_force: skipping steam deck internal display connector {connector[1]} of card {connector[0]} force off")
         return
     try:
         with open(path, "w") as force_file:
             force_file.write(force)
     except Exception as e:
-        decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector} to {force}: {e}")
+        decky_plugin.logger.error(f"_set_connector_force: couldn't set connector {connector[1]} of card {connector[0]} to {force}: {e}")
 
 
-async def _get_connector_force(connector: str):
-    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "force")
+async def _get_connector_force(connector: tuple[int, str]):
+    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "force")
     try:
         with open(path, "r") as force_file:
             return force_file.read().strip()
     except Exception as e:
-        decky_plugin.logger.error(f"_get_connector_force: couldn't get connector {connector} force value: {e}")
+        decky_plugin.logger.error(f"_get_connector_force: couldn't get connector {connector[1]} force value of card {connector[0]}: {e}")
 
 
-async def _get_connector_connected(connector: str):
-    status_path = os.path.join("/sys/class/drm", f"card0-{connector}", "status")
+async def _get_connector_connected(connector: tuple[int, str]):
+    status_path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "status")
     force = await _get_connector_force(connector)
     try:
         if force == "off":
@@ -141,17 +178,17 @@ async def _get_connector_connected(connector: str):
             await _set_connector_force(connector, force)
         return connected == "connected"
     except Exception as e:
-        decky_plugin.logger.error(f"_get_connector_connected: couldn't get connected status of connector {connector}: {e}")
+        decky_plugin.logger.error(f"_get_connector_connected: couldn't get connected status of connector {connector[1]} of card {connector[0]}: {e}")
         return False
 
 
-async def _get_connector_enabled(connector: str):
-    path = os.path.join("/sys/class/drm", f"card0-{connector}", "enabled")
+async def _get_connector_enabled(connector: tuple[int, str]):
+    path = os.path.join("/sys/class/drm", f"card{connector[0]}-{connector[1]}", "enabled")
     try:
         with open(path, "r") as enabled_file:
             return enabled_file.read().strip() == "enabled"
     except Exception as e:
-        decky_plugin.logger.error(f"_get_connector_enabled: couldn't get enabled status of connector {connector}: {e}")
+        decky_plugin.logger.error(f"_get_connector_enabled: couldn't get enabled status of connector {connector[1]} of card {connector[0]}: {e}")
         return False
 
 
@@ -178,7 +215,7 @@ async def _list_connected_connectors():
     return connected
 
 
-async def _switch_display_to(connector):
+async def _switch_display_to(connector: tuple[int, str]):
     async with lock:
         connectors = await _list_connectors()
         for off_connector in connectors:
@@ -188,22 +225,22 @@ async def _switch_display_to(connector):
         await _trigger_hotplug(connector)
 
     settings = _load_settings()
-    default_audio = settings.get("displays", {}).get(connector, {}).get("defaultAudio")
+    default_audio = settings.get("displays", {}).get(_connector_to_string(connector), {}).get("defaultAudio")
     if default_audio:
         audio_result = await _set_default_sink_with_retry(default_audio)
         if not audio_result["ok"]:
-            decky_plugin.logger.warning(f"Couldn't set default audio for {connector}: {audio_result['error']}")
+            decky_plugin.logger.warning(f"Couldn't set default audio for {connector[1]} of card {connector[0]}: {audio_result['error']}")
 
     return {"ok": True}
 
 
-async def _trigger_hotplug(connector: str):
-    path = os.path.join("/sys/kernel/debug/dri", "0", connector, "trigger_hotplug")
+async def _trigger_hotplug(connector: tuple[int, str]):
+    path = os.path.join("/sys/kernel/debug/dri", str(connector[0]), connector[1], "trigger_hotplug")
     try:
         with open(path, "w") as trigger_file:
             trigger_file.write("1\n") #the parser used by the kernel defaults to 0 if given only 1 byte. added a new line prevents this
     except Exception as e:
-        decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for connector {connector}: {e}")
+        decky_plugin.logger.error(f"_trigger_hotplug: couldn't trigger hotplug for connector {connector[1]} of card {connector[0]}: {e}")
 
 
 def _list_audio_sinks():
@@ -312,8 +349,11 @@ class Plugin:
         audio_settings = settings.get("audio", {})
 
         async with lock:
-            connected_displays = set(await _list_connected_connectors())
-        all_display_ids = sorted(connected_displays | set(display_settings.keys()))
+            connected_connectors = await _list_connected_connectors()
+        parsed_connected_connectors = []
+        for connector in connected_connectors:
+            parsed_connected_connectors.append(_connector_to_string(connector))
+        all_display_ids = sorted(set(parsed_connected_connectors) | set(display_settings.keys()))
         displays = []
         for display_id in all_display_ids:
             config = display_settings.get(display_id, {})
@@ -322,7 +362,7 @@ class Plugin:
                 "label": config.get("label") or display_id,
                 "hidden": bool(config.get("hidden", False)),
                 "defaultAudio": config.get("defaultAudio"),
-                "connected": display_id in connected_displays,
+                "connected": display_id in parsed_connected_connectors,
             })
 
         sinks = _list_audio_sinks()
@@ -340,10 +380,15 @@ class Plugin:
                 "connected": audio_id in connected_audio_ids,
             })
 
+        current_display = await _get_current_connector()
+        parsed_current = None
+        if current_display is not None:
+            parsed_current = _connector_to_string(current_display)
+
         return {
             "displays": displays,
             "audio": audio,
-            "currentDisplay": await _get_current_connector(),
+            "currentDisplay": parsed_current,
             "currentAudio": _get_default_sink(),
         }
 
@@ -386,21 +431,21 @@ class Plugin:
             decky_plugin.logger.error(f"switch_audio failed: {e}")
             return {"ok": False, "error": str(e)}
 
-    async def switch_display(self, connector: str):
-        return await _switch_display_to(connector)
+    async def switch_display(self, connector_string: str):
+        return await _switch_display_to(_connector_string_to_tuple(connector_string))
 
     async def _apply_default_display_if_configured(self, source: str):
         config = _get_config()
         default_display = config.get("defaultDisplay")
-        if not default_display:
+        if default_display is None:
             return
 
         current = await _get_current_connector()
-        if current == default_display:
+        if current == _connector_string_to_tuple(default_display):
             return
 
         decky_plugin.logger.info(f"Applying default display '{default_display}' ({source})")
-        result = await _switch_display_to(default_display)
+        result = await _switch_display_to(_connector_string_to_tuple(default_display))
         if not result.get("ok"):
             decky_plugin.logger.warning(f"Couldn't apply default display on {source}: {result.get('error')}")
 
