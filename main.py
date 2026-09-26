@@ -22,6 +22,16 @@ RESUME_GAP_THRESHOLD_SECONDS = 5
 
 lock = asyncio.Lock()
 
+
+def _connector_string_to_tuple(string: str):
+    connector_parts = string.split(":", 1)
+    return int(connector_parts[0]), connector_parts[1]
+
+
+def _connector_to_string(connector: tuple[int, str]):
+    return f"{connector[0]}:{connector[1]}"
+
+
 def _load_settings():
     if os.path.exists(SETTINGS_FILE):
         try:
