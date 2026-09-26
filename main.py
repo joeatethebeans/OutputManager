@@ -14,7 +14,7 @@ DEFAULT_CONFIG = {
     "steamDeckInternalConnector": "0:eDP-1",
     "targetUid": 1000,
     "usernameOverride": None,
-    "defaultDisplay": None,
+    "defaultConnector": None,
 }
 
 RESUME_POLL_INTERVAL_SECONDS = 10
@@ -37,24 +37,24 @@ def _load_settings():
         try:
             with open(SETTINGS_FILE, "r") as f:
                 data = json.load(f)
-                data.setdefault("displays", {})
+                data.setdefault("connectors", {})
                 data.setdefault("audio", {})
                 data.setdefault("config", {})
 
             #remove old invalidated configs from before multi-gpu support
             invalidated = False
 
-            for key in list(data["displays"].keys()):
+            for key in list(data["connectors"].keys()):
                 if ":" not in key:
                     invalidated = True
-                    del data["displays"][key]
-                    decky_plugin.logger.info(f"_load_settings: deleted invalid display entry {key}")
+                    del data["connectors"][key]
+                    decky_plugin.logger.info(f"_load_settings: deleted invalid connectors entry {key}")
 
-            default_display = data["config"].get("defaultDisplay")
-            if isinstance(default_display, str) and ":" not in default_display:
+            default_connector = data["config"].get("defaultConnector")
+            if isinstance(default_connector, str) and ":" not in default_connector:
                 invalidated = True
-                data["config"]["defaultDisplay"] = None
-                decky_plugin.logger.info("_load_settings: deleted invalid default display config")
+                data["config"]["defaultConnector"] = None
+                decky_plugin.logger.info("_load_settings: deleted invalid default connector config")
 
             steam_deck_internal_connector = data["config"].get("steamDeckInternalConnector")
             if isinstance(steam_deck_internal_connector, str) and ":" not in steam_deck_internal_connector:
@@ -68,7 +68,7 @@ def _load_settings():
             return data
         except Exception:
             pass
-    return {"displays": {}, "audio": {}, "config": {}}
+    return {"connectors": {}, "audio": {}, "config": {}}
 
 
 def _save_settings(data):
@@ -216,6 +216,7 @@ async def _list_connected_connectors():
 
 
 async def _switch_display_to(connector: tuple[int, str]):
+async def _switch_connector_to(connector: tuple[int, str]):
     async with lock:
         connectors = await _list_connectors()
         for off_connector in connectors:
@@ -227,6 +228,7 @@ async def _switch_display_to(connector: tuple[int, str]):
     settings = _load_settings()
     default_audio = settings.get("displays", {}).get(_connector_to_string(connector), {}).get("defaultAudio")
     if default_audio:
+    default_audio = settings.get("connectors", {}).get(_connector_to_string(connector), {}).get("defaultAudio")
         audio_result = await _set_default_sink_with_retry(default_audio)
         if not audio_result["ok"]:
             decky_plugin.logger.warning(f"Couldn't set default audio for {connector[1]} of card {connector[0]}: {audio_result['error']}")
@@ -333,19 +335,19 @@ class Plugin:
             value = (patch["usernameOverride"] or "").strip()
             config["usernameOverride"] = value or None
 
-        if "defaultDisplay" in patch:
-            value = patch["defaultDisplay"]
+        if "defaultConnector" in patch:
+            value = patch["defaultConnector"]
             if not value:
-                config["defaultDisplay"] = None
+                config["defaultConnector"] = None
             else:
-                config["defaultDisplay"] = value
+                config["defaultConnector"] = value
 
         _save_settings(settings)
         return {"ok": True}
 
     async def get_state(self):
         settings = _load_settings()
-        display_settings = settings.get("displays", {})
+        connector_settings = settings.get("connectors", {})
         audio_settings = settings.get("audio", {})
 
         async with lock:
@@ -353,16 +355,16 @@ class Plugin:
         parsed_connected_connectors = []
         for connector in connected_connectors:
             parsed_connected_connectors.append(_connector_to_string(connector))
-        all_display_ids = sorted(set(parsed_connected_connectors) | set(display_settings.keys()))
-        displays = []
-        for display_id in all_display_ids:
-            config = display_settings.get(display_id, {})
-            displays.append({
-                "id": display_id,
-                "label": config.get("label") or display_id,
+        all_connector_ids = sorted(set(parsed_connected_connectors) | set(connector_settings.keys()))
+        connectors = []
+        for connector_ids in all_connector_ids:
+            config = connector_settings.get(connector_ids, {})
+            connectors.append({
+                "id": connector_ids,
+                "label": config.get("label") or connector_ids,
                 "hidden": bool(config.get("hidden", False)),
                 "defaultAudio": config.get("defaultAudio"),
-                "connected": display_id in parsed_connected_connectors,
+                "connected": connector_ids in parsed_connected_connectors,
             })
 
         sinks = _list_audio_sinks()
@@ -380,20 +382,27 @@ class Plugin:
                 "connected": audio_id in connected_audio_ids,
             })
 
-        current_display = await _get_current_connector()
+        connector_audio = None
+        if connector_sink is not None:
+            connector_audio = {"id": connector_sink["id"], "label": connector_sink["description"]}
+
         parsed_current = None
-        if current_display is not None:
-            parsed_current = _connector_to_string(current_display)
+        if current_connector is not None:
+            parsed_current = _connector_to_string(current_connector)
+
+        default_sink = _get_default_sink()
 
         return {
-            "displays": displays,
+            "connectors": connectors,
             "audio": audio,
-            "currentDisplay": parsed_current,
-            "currentAudio": _get_default_sink(),
+            "currentConnector": parsed_current,
+            "currentAudio": default_sink,
+            "connectorAudio": connector_audio,
+            "usingConnectorAudio": connector_sink is not None and connector_sink["id"] == default_sink
         }
 
     async def forget_output(self, output_type: str, output_id: str):
-        if output_type not in ("displays", "audio"):
+        if output_type not in ("connectors", "audio"):
             return {"ok": False, "error": f"unknown output type: {output_type}"}
         settings = _load_settings()
         section = settings.get(output_type, {})
@@ -403,7 +412,7 @@ class Plugin:
         return {"ok": True}
 
     async def update_output(self, output_type: str, output_id: str, patch: dict):
-        if output_type not in ("displays", "audio"):
+        if output_type not in ("connectors", "audio"):
             return {"ok": False, "error": f"unknown output type: {output_type}"}
 
         settings = _load_settings()
@@ -415,7 +424,7 @@ class Plugin:
             entry["label"] = label or None
         if "hidden" in patch:
             entry["hidden"] = bool(patch["hidden"])
-        if output_type == "displays" and "defaultAudio" in patch:
+        if output_type == "connectors" and "defaultAudio" in patch:
             entry["defaultAudio"] = patch["defaultAudio"] or None
 
         _save_settings(settings)
@@ -431,27 +440,34 @@ class Plugin:
             decky_plugin.logger.error(f"switch_audio failed: {e}")
             return {"ok": False, "error": str(e)}
 
-    async def switch_display(self, connector_string: str):
-        return await _switch_display_to(_connector_string_to_tuple(connector_string))
+    async def use_connector_sink(self):
+        connector_sink = await _get_current_connector_sink()
+        if connector_sink is None:
+            decky_plugin.logger.info(f"use_connector_sink: current connector has no sink")
+            return {"ok": False, "error": "This connector has no audio output"}
+        return await _set_default_sink_with_retry(connector_sink["id"])
 
-    async def _apply_default_display_if_configured(self, source: str):
+    async def switch_connector(self, connector_string: str):
+        return await _switch_connector_to(_connector_string_to_tuple(connector_string))
+
+    async def _apply_default_connector_if_configured(self, source: str):
         config = _get_config()
-        default_display = config.get("defaultDisplay")
-        if default_display is None:
+        default_connector = config.get("defaultConnector")
+        if default_connector is None:
             return
 
         current = await _get_current_connector()
-        if current == _connector_string_to_tuple(default_display):
+        if current == _connector_string_to_tuple(default_connector):
             return
 
-        decky_plugin.logger.info(f"Applying default display '{default_display}' ({source})")
-        result = await _switch_display_to(_connector_string_to_tuple(default_display))
+        decky_plugin.logger.info(f"Applying default connector '{default_connector}' ({source})")
+        result = await _switch_connector_to(_connector_string_to_tuple(default_connector))
         if not result.get("ok"):
-            decky_plugin.logger.warning(f"Couldn't apply default display on {source}: {result.get('error')}")
+            decky_plugin.logger.warning(f"Couldn't apply default connector on {source}: {result.get('error')}")
 
     async def _boot(self):
         await asyncio.sleep(5)
-        await self._apply_default_display_if_configured("boot")
+        await self._apply_default_connector_if_configured("boot")
 
     async def _suspend_task(self):
         last_monotonic = time.monotonic()
@@ -469,7 +485,7 @@ class Plugin:
             gap = boot_delta - mono_delta
             if gap > RESUME_GAP_THRESHOLD_SECONDS:
                 decky_plugin.logger.info(f"Detected resume from suspend (gap {gap:.1f}s)")
-                await self._apply_default_display_if_configured("resume from suspend")
+                await self._apply_default_connector_if_configured("resume from suspend")
 
     async def _desktop_mode_task(self):
         await asyncio.sleep(5)
@@ -480,10 +496,10 @@ class Plugin:
             is_desktop = _is_desktop_session_active()
 
             if is_desktop and not was_desktop:
-                decky_plugin.logger.info("Entered Desktop Mode, releasing forced displays")
+                decky_plugin.logger.info("Entered Desktop Mode, releasing forced connectors")
                 await _unspecify_all_connectors()
             elif was_desktop and not is_desktop:
                 decky_plugin.logger.info("Entered Gaming Mode, defaulting outputs")
-                await self._apply_default_display_if_configured("gaming mode resume")
+                await self._apply_default_connector_if_configured("gaming mode resume")
 
             was_desktop = is_desktop
